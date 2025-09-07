@@ -782,6 +782,4 @@ with st.expander("How it works and tips"):
         "- Learned patterns: uses the most frequent positional shift patterns seen in history to set priors. This helps capture runs where digits move by ±1 for a while (e.g., 1234 → ... → 1235).\n"
         "- Feedback boosts (optional): after live successes, adds small pseudo-counts to the mapped digit transitions to slightly favor recent winning moves.\n"
         "- Guidance: If you believe the key mix is one ±5, one ±2, one 0, one ±3, try 'Strict family'. If patterns drift a lot, use 'Learned from history' or Hand-crafted with {0,±1,±2,±3,±5}."
-    )
-----------------------------
- the key mix is one ±5, one ±2, one 0, one ±3, try 'Strict family'. If patterns drift a lot, use 'Learned from history' or Hand-crafted with 
+    ) 
