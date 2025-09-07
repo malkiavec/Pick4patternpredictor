@@ -77,8 +77,7 @@ def read_pred_log() -> pd.DataFrame:
     if "hit" in df.columns:
         df["hit"] = df["hit"].astype(int)
     return df
-     
-def annotate_preds(preds: List[Tuple[int, ...]], actual: Tuple[int, ...], bonus_pos: float = 0.25) -> List[Dict]:
+    def annotate_preds(preds: List[Tuple[int, ...]], actual: Tuple[int, ...], bonus_pos: float = 0.25) -> List[Dict]:
     rows = []
     for p in preds:
         rows.append({
@@ -275,6 +274,19 @@ def score_prediction_against_actual(pred: Tuple[int, ...], actual: Tuple[int, ..
     base = multiset_overlap(pred, actual)
     bonus = bonus_pos * pos_matches(pred, actual)
     return float(base) + float(bonus)
+annot = annotate_preds(preds, actual, bonus_pos=bonus_pos)
+best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
+rows.append({
+    "t": t,
+    "seed": tuple_to_str(seed_bt),
+    "actual": tuple_to_str(actual),
+    "best_overlap": int(best["overlap"]),
+    "best_pos_matches": int(best["pos_matches"]),
+    "success": int(best["overlap"] >= int(success_k)),
+    "best_pred": best["pred"],
+    "best_score": float(best["score"]),
+    "preds": [a["pred"] for a in annot],  # keep full list if you still want it
+})
 
 # --------------------------------
 # Cached stages
@@ -606,9 +618,16 @@ with st.expander("Mark a past prediction as correct (positionless order)"):
             st.caption("Feedback boosts applied as pseudo-counts after successful top-1 hits.")
 
 # --------------------------------
-# --------------------------------
 # Backtest (pattern-based, overlap threshold)
 # --------------------------------
+st.dataframe(bt[["t","seed","actual","best_pred","best_overlap","best_pos_matches","success"]].tail(25))
+st.dataframe(bt[["t","seed","actual","best_pred","best_overlap","best_pos_matches","success"]].tail(25))
+
+# Optional: pick a row to inspect
+row_idx = st.number_input("Inspect backtest row index", min_value=int(bt["t"].min()), max_value=int(bt["t"].max()), value=int(bt["t"].max()))
+row = bt.loc[bt["t"] == row_idx].iloc[0]
+with st.expander(f"Predictions for t={row_idx} (actual {row['actual']})"):
+    st.write(row["preds"])
 
 st.subheader("Backtest (pattern-based)")
 
@@ -672,44 +691,47 @@ def backtest_patterns(draws: List[Tuple[int, ...]],
         preds = [c for c, _, _ in scored_bt[:num_preds]]
         actual = draws[t]
 
-        annot = annotate_preds(preds, actual, bonus_pos=bonus_pos)
-        best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
+        overlaps = [multiset_overlap(p, actual) for p in preds]
+        pos_bonuses = [pos_matches(p, actual) for p in preds]
+        best_overlap = max(overlaps) if overlaps else 0
+        success = int(best_overlap >= int(success_k))
+        best_score = max(score_prediction_against_actual(p, actual, bonus_pos=bonus_pos) for p in preds) if preds else 0.0
+
         rows.append({
             "t": t,
             "seed": tuple_to_str(seed_bt),
             "actual": tuple_to_str(actual),
-            "best_overlap": int(best["overlap"]),
-            "best_pos_matches": int(best["pos_matches"]),
-            "success": int(best["overlap"] >= int(success_k)),
-            "best_pred": best["pred"],
-            "best_score": float(best["score"]),
-            "pred": [a["pred"] for a in annot],  # full list if wanted
+            "best_overlap": int(best_overlap),
+            "best_pos_matches": int(max(pos_bonuses) if pos_bonuses else 0),
+            "success": int(success),
+            "best_score": float(best_score),
+            "preds": [tuple_to_str(p) for p in preds],
         })
     return pd.DataFrame(rows)
 
-# Run the backtest and show results
 if run_bt:
-    bt = backtest_patterns(
-        draws, recent_window, max_lag, list(lag_weights), alpha,
-        pattern_mode, SHIFT_SET, pattern_limit, num_preds,
-        bonus_pos, int(success_k), int(min_hist)
-    )
+    bt = backtest_patterns(draws, recent_window, max_lag, list(lag_weights), alpha,
+                           pattern_mode, SHIFT_SET, pattern_limit, num_preds, bonus_pos, int(success_k), int(min_hist))
     if bt.empty:
         st.info("No backtest rows. Increase history or adjust settings.")
     else:
         total = len(bt)
         successes = int(bt["success"].sum())
-        st.metric(
-            f"Backtest success (overlap ≥ {success_k})",
-            f"{(successes/total):.1%}",
-            help=f"{successes}/{total}"
-        )
+        st.metric(f"Backtest success (overlap ≥ {success_k})", f"{(successes/total):.1%}", help=f"{successes}/{total}")
         bt["rolling_success"] = bt["success"].rolling(50, min_periods=1).mean()
         st.line_chart(bt.set_index("t")[["rolling_success"]])
         st.dataframe(bt.tail(25), use_container_width=True)
-        st.download_button(
-            "Download backtest (CSV)",
-            bt.to_csv(index=False).encode("utf-8"),
-            "backtest_pattern.csv",
-            "text/csv"
-        )
+        st.download_button("Download backtest (CSV)", bt.to_csv(index=False).encode("utf-8"), "backtest_pattern.csv", "text/csv")
+
+# --------------------------------
+# Notes
+# --------------------------------
+with st.expander("How it works and tips"):
+    st.write(
+        "- Training: fits digit transition probabilities from your history with lag weighting and Laplace smoothing.\n"
+        "- Patterns: generates or learns shift patterns (per-digit ±k modulo 10). The pattern can vary each draw.\n"
+        "- Positionless scoring: success if at least K digits match regardless of order (default K=3). Exact-position matches add a small bonus for ranking.\n"
+        "- Learned patterns: uses the most frequent positional shift patterns seen in history to set priors. This helps capture runs where digits move by ±1 for a while (e.g., 1234 → ... → 1235).\n"
+        "- Feedback boosts (optional): after live successes, adds small pseudo-counts to the mapped digit transitions to slightly favor recent winning moves.\n"
+        "- Guidance: If you believe the key mix is one ±5, one ±2, one 0, one ±3, try 'Strict family'. If patterns drift a lot, use 'Learned from history' or Hand-crafted with {0,±1,±2,±3,±5}."
+    )
