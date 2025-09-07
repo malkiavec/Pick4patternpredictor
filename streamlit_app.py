@@ -567,17 +567,24 @@ with st.expander("Mark a past prediction as correct (positionless order)"):
                         },
                     }
                 )
-"timestamp": pd.Timestamp.utcnow().isoformat(),
-                        "seed": tuple_to_str(seed_t),
-                        "preds": preds_for_check,
-                        "actual": tuple_to_str(actual_t),
-                        "hit": success,
-                        "mode": {
-                            "note": "manual_feedback",
-                            "success_k": int(threshold_choice),
-                        },
-                    }
-                )
+                # Optional: add boosts if success (reinforce top-1 that achieved best overlap)
+                if enable_boosts and success:
+                    # Choose the prediction with best overlap; if many tie, use first
+                    best_idx = int(np.argmax(overlaps))
+                    top_pred_t = to_tuple(preds_for_check[best_idx], n_digits=4)
+                    pairs = greedy_multiset_mapping(seed_t, top_pred_t)
+                    b = load_boosts()
+                    for x, y in pairs:
+                        key = f"{x}->{y}"
+                        b[key] = b.get(key, 0.0) + 1.0
+                    save_boosts(b)
+                if success:
+                    st.success(f"Recorded success: best overlap = {best_overlap} (threshold {threshold_choice}).")
+                else:
+                    st.info(f"Recorded miss: best overlap = {best_overlap} (threshold {threshold_choice}).")
+        except Exception as e:
+            st.error(f"Could not record feedback: {e}")
+
                 # Optional: add boosts if success (reinforce top-1 that achieved best overlap)
                 if enable_boosts and success:
                     # Choose the prediction with best overlap; if many tie, use first
