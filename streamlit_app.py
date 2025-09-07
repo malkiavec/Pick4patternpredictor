@@ -77,7 +77,8 @@ def read_pred_log() -> pd.DataFrame:
     if "hit" in df.columns:
         df["hit"] = df["hit"].astype(int)
     return df
-    def annotate_preds(preds: List[Tuple[int, ...]], actual: Tuple[int, ...], bonus_pos: float = 0.25) -> List[Dict]:
+     
+def annotate_preds(preds: List[Tuple[int, ...]], actual: Tuple[int, ...], bonus_pos: float = 0.25) -> List[Dict]:
     rows = []
     for p in preds:
         rows.append({
