@@ -690,30 +690,10 @@ rows.append({
     "success": int(best["overlap"] >= int(success_k)),
     "best_pred": best["pred"],
     "best_score": float(best["score"]),
-    "pred": [a["pred"] for a in annot],  # keep full list if you still want it
-}) 
-
-         overlaps = [multiset_overlap(p, actual) for p in preds]
-pos_bonuses = [pos_matches(p, actual) for p in preds]
-best_overlap = max(overlaps) if overlaps else 0
-success = int(best_overlap >= int(success_k))
-best_score = max(score_prediction_against_actual(p, actual, bonus_pos=bonus_pos) for p in preds) if preds else 0.0
-
-        rows.append({
-            "t": t,
-            "seed": tuple_to_str(seed_bt),
-            "actual": tuple_to_str(actual),
-            "best_overlap": int(best_overlap),
-            "best_pos_matches": int(max(pos_bonuses) if pos_bonuses else 0),
-            "success": int(success),
-            "best_score": float(best_score),
-            "preds": [tuple_to_str(p) for p in preds],
-        })
+    "pred": [a["pred"] for a in annot],  # keep full list if you still want it})
     return pd.DataFrame(rows)
-
-if run_bt:
-    bt = backtest_patterns(draws, recent_window, max_lag, list(lag_weights), alpha,
-                           pattern_mode, SHIFT_SET, pattern_limit, num_preds, bonus_pos, int(success_k), int(min_hist))
+    if run_bt:bt = backtest_patterns(draws, recent_window, max_lag, list(lag_weights), alpha,
+pattern_mode, SHIFT_SET, pattern_limit, num_preds, bonus_pos, int(success_k), int(min_hist))
     if bt.empty:
         st.info("No backtest rows. Increase history or adjust settings.")
     else:
