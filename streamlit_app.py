@@ -509,7 +509,7 @@ else:
                 log_df.at[idx, "hit"] = success
                 updates.append((idx, actual, success))
 
-                # Optional: update boosts for any correct digits (positionlessly) from top-1 prediction
+# Optional: update boosts for any correct digits (positionlessly) from top-1 prediction
                 if enable_boosts and preds_list:
                     top1 = to_tuple(preds_list[0], n_digits=n_digits)
                     pairs = greedy_multiset_mapping(to_tuple(seed_str, n_digits=n_digits), top1)
