@@ -275,19 +275,6 @@ def score_prediction_against_actual(pred: Tuple[int, ...], actual: Tuple[int, ..
     base = multiset_overlap(pred, actual)
     bonus = bonus_pos * pos_matches(pred, actual)
     return float(base) + float(bonus)
-annot = annotate_preds(pred, actual, bonus_pos=bonus_pos)
-best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
-rows.append({
-    "t": t,
-    "seed": tuple_to_str(seed_bt),
-    "actual": tuple_to_str(actual),
-    "best_overlap": int(best["overlap"]),
-    "best_pos_matches": int(best["pos_matches"]),
-    "success": int(best["overlap"] >= int(success_k)),
-    "best_pred": best["pred"],
-    "best_score": float(best["score"]),
-    "pred": [a["pred"] for a in annot],  # keep full list if you still want it
-})
 
 # --------------------------------
 # Cached stages
@@ -691,6 +678,20 @@ def backtest_patterns(draws: List[Tuple[int, ...]],
         scored_bt.sort(key=lambda r: r[1], reverse=True)
         preds = [c for c, _, _ in scored_bt[:num_preds]]
         actual = draws[t]
+
+        annot = annotate_preds(pred, actual, bonus_pos=bonus_pos)
+best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
+rows.append({
+    "t": t,
+    "seed": tuple_to_str(seed_bt),
+    "actual": tuple_to_str(actual),
+    "best_overlap": int(best["overlap"]),
+    "best_pos_matches": int(best["pos_matches"]),
+    "success": int(best["overlap"] >= int(success_k)),
+    "best_pred": best["pred"],
+    "best_score": float(best["score"]),
+    "pred": [a["pred"] for a in annot],  # keep full list if you still want it
+})
 
         overlaps = [multiset_overlap(p, actual) for p in preds]
         pos_bonuses = [pos_matches(p, actual) for p in preds]
