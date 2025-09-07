@@ -713,7 +713,7 @@ if run_bt:
             "backtest_pattern.csv",
             "text/csv"
         )
-            like = 0.0
+        like = 0.0
             for x, y in greedy_multiset_mapping(seed_bt, cand):
                 like += math.log(max(probs_bt.get((x, y), 1e-12), 1e-12))
             score = math.log(prior + 1e-12) + like
