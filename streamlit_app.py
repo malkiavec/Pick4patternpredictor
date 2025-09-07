@@ -77,6 +77,19 @@ def read_pred_log() -> pd.DataFrame:
     if "hit" in df.columns:
         df["hit"] = df["hit"].astype(int)
     return df
+    def annotate_preds(preds: List[Tuple[int, ...]], actual: Tuple[int, ...], bonus_pos: float = 0.25) -> List[Dict]:
+    rows = []
+    for p in preds:
+        rows.append({
+            "pred": tuple_to_str(p),
+            "overlap": multiset_overlap(p, actual),
+            "pos_matches": pos_matches(p, actual),
+            "score": score_prediction_against_actual(p, actual, bonus_pos=bonus_pos),
+        })
+    rows.sort(key=lambda r: (r["overlap"], r["pos_matches"], r["score"]), reverse=True)
+    return rows
+
+    
 
 # --------------------------------
 # Core utils
@@ -261,6 +274,19 @@ def score_prediction_against_actual(pred: Tuple[int, ...], actual: Tuple[int, ..
     base = multiset_overlap(pred, actual)
     bonus = bonus_pos * pos_matches(pred, actual)
     return float(base) + float(bonus)
+annot = annotate_preds(preds, actual, bonus_pos=bonus_pos)
+best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
+rows.append({
+    "t": t,
+    "seed": tuple_to_str(seed_bt),
+    "actual": tuple_to_str(actual),
+    "best_overlap": int(best["overlap"]),
+    "best_pos_matches": int(best["pos_matches"]),
+    "success": int(best["overlap"] >= int(success_k)),
+    "best_pred": best["pred"],
+    "best_score": float(best["score"]),
+    "preds": [a["pred"] for a in annot],  # keep full list if you still want it
+})
 
 # --------------------------------
 # Cached stages
@@ -505,6 +531,71 @@ else:
                             key = f"{x}->{y}"
                             b[key] = b.get(key, 0.0) + 1.0
                         save_boosts(b)
+# -----------------------------
+# Manual feedback: mark a prediction as correct (positionless)
+# -----------------------------
+st.subheader("Manual feedback (teach the app a correct hit)")
+
+with st.expander("Mark a past prediction as correct (positionless order)"):
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        seed_input = st.text_input("Seed (previous draw)", value=tuple_to_str(draws[-2]) if len(draws) >= 2 else "")
+        actual_input = st.text_input("Actual next draw", value=tuple_to_str(draws[-1]) if len(draws) >= 1 else "")
+        threshold_choice = st.selectbox("Success threshold (overlap)", options=[3, 4], index=1)  # default 4-of-4
+    with col_m2:
+        mode_choice = st.selectbox("Which predictions to validate", ["Paste predictions", "Use current predictions"], index=1)
+        pasted_preds = st.text_area("Predictions (comma-separated like 4728,6913,8035)", value="")
+
+    # Prepare prediction list
+    preds_for_check: List[str] = []
+    if mode_choice == "Use current predictions":
+        # Use the predictions we just generated above
+        preds_for_check = predictions  # from the Predictions section
+    else:
+        if pasted_preds.strip():
+            preds_for_check = [p.strip() for p in pasted_preds.split(",") if p.strip()]
+
+    if st.button("Mark success (positionless)"):
+        try:
+            seed_t = to_tuple(seed_input, n_digits=4)
+            actual_t = to_tuple(actual_input, n_digits=4)
+            if not preds_for_check:
+                st.warning("No predictions to check. Paste predictions or select 'Use current predictions'.")
+            else:
+                overlaps = [multiset_overlap(to_tuple(p, n_digits=4), actual_t) for p in preds_for_check]
+                best_overlap = max(overlaps) if overlaps else 0
+                success = int(best_overlap >= int(threshold_choice))
+                # Write a record to live log
+                append_pred_log(
+                    {
+                        "timestamp": pd.Timestamp.utcnow().isoformat(),
+                        "seed": tuple_to_str(seed_t),
+                        "preds": preds_for_check,
+                        "actual": tuple_to_str(actual_t),
+                        "hit": success,
+                        "mode": {
+                            "note": "manual_feedback",
+                            "success_k": int(threshold_choice),
+                        },
+                    }
+                )
+                # Optional: add boosts if success (reinforce top-1 that achieved best overlap)
+                if enable_boosts and success:
+                    # Choose the prediction with best overlap; if many tie, use first
+                    best_idx = int(np.argmax(overlaps))
+                    top_pred_t = to_tuple(preds_for_check[best_idx], n_digits=4)
+                    pairs = greedy_multiset_mapping(seed_t, top_pred_t)
+                    b = load_boosts()
+                    for x, y in pairs:
+                        key = f"{x}->{y}"
+                        b[key] = b.get(key, 0.0) + 1.0
+                    save_boosts(b)
+                if success:
+                    st.success(f"Recorded success: best overlap = {best_overlap} (threshold {threshold_choice}).")
+                else:
+                    st.info(f"Recorded miss: best overlap = {best_overlap} (threshold {threshold_choice}).")
+        except Exception as e:
+            st.error(f"Could not record feedback: {e}")
 
     if updates:
         # Rewrite JSONL
@@ -529,6 +620,15 @@ else:
 # --------------------------------
 # Backtest (pattern-based, overlap threshold)
 # --------------------------------
+st.dataframe(bt[["t","seed","actual","best_pred","best_overlap","best_pos_matches","success"]].tail(25))
+st.dataframe(bt[["t","seed","actual","best_pred","best_overlap","best_pos_matches","success"]].tail(25))
+
+# Optional: pick a row to inspect
+row_idx = st.number_input("Inspect backtest row index", min_value=int(bt["t"].min()), max_value=int(bt["t"].max()), value=int(bt["t"].max()))
+row = bt.loc[bt["t"] == row_idx].iloc[0]
+with st.expander(f"Predictions for t={row_idx} (actual {row['actual']})"):
+    st.write(row["preds"])
+
 st.subheader("Backtest (pattern-based)")
 
 min_hist = st.number_input("Min history before testing", min_value=20, max_value=2000, value=80, step=10)
