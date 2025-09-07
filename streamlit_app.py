@@ -692,8 +692,7 @@ rows.append({
     "best_score": float(best["score"]),
     "pred": [a["pred"] for a in annot],  # keep full list if you still want it
 })
-
-        overlaps = [multiset_overlap(p, actual) for p in preds]
+ overlaps = [multiset_overlap(p, actual) for p in preds]
         pos_bonuses = [pos_matches(p, actual) for p in preds]
         best_overlap = max(overlaps) if overlaps else 0
         success = int(best_overlap >= int(success_k))
