@@ -692,11 +692,11 @@ rows.append({
     "best_score": float(best["score"]),
     "pred": [a["pred"] for a in annot],  # keep full list if you still want it
 })
-         overlaps = [multiset_overlap(p, actual) for p in preds]
-        pos_bonuses = [pos_matches(p, actual) for p in preds]
-        best_overlap = max(overlaps) if overlaps else 0
-        success = int(best_overlap >= int(success_k))
-        best_score = max(score_prediction_against_actual(p, actual, bonus_pos=bonus_pos) for p in preds) if preds else 0.0
+           overlaps = [multiset_overlap(p, actual) for p in preds]
+pos_bonuses = [pos_matches(p, actual) for p in preds]
+best_overlap = max(overlaps) if overlaps else 0
+success = int(best_overlap >= int(success_k))
+best_score = max(score_prediction_against_actual(p, actual, bonus_pos=bonus_pos) for p in preds) if preds else 0.0
 
         rows.append({
             "t": t,
