@@ -692,7 +692,8 @@ rows.append({
     "best_score": float(best["score"]),
     "pred": [a["pred"] 
              for a in annot],  # keep full list if you still want it
-}) return pd.DataFrame(rows)if run_bt:bt = backtest_patterns(draws, recent_window, max_lag, list(lag_weights), alpha,
+}) 
+return pd.DataFrame(rows)if run_bt:bt = backtest_patterns(draws, recent_window, max_lag, list(lag_weights), alpha,
 pattern_mode, SHIFT_SET, pattern_limit, num_preds, bonus_pos, int(success_k), int(min_hist))
     if bt.empty:
         st.info("No backtest rows. Increase history or adjust settings.")
