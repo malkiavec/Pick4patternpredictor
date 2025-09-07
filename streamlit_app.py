@@ -582,8 +582,8 @@ with st.expander("Mark a past prediction as correct (positionless order)"):
                     st.success(f"Recorded success: best overlap = {best_overlap} (threshold {threshold_choice}).")
                 else:
                     st.info(f"Recorded miss: best overlap = {best_overlap} (threshold {threshold_choice}).")
-        except Exception as e:
-            st.error(f"Could not record feedback: {e}")
+              bbbexcept Exception as e:
+                    st.error(f"Could not record feedback: {e}")
 
                 # Optional: add boosts if success (reinforce top-1 that achieved best overlap)
                 if enable_boosts and success:
