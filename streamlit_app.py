@@ -275,7 +275,7 @@ def score_prediction_against_actual(pred: Tuple[int, ...], actual: Tuple[int, ..
     base = multiset_overlap(pred, actual)
     bonus = bonus_pos * pos_matches(pred, actual)
     return float(base) + float(bonus)
-annot = annotate_preds (preds, actual, bonus_pos=bonus_pos)
+annot = annotate_preds(pred, actual, bonus_pos=bonus_pos)
 best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
 rows.append({
     "t": t,
@@ -286,7 +286,7 @@ rows.append({
     "success": int(best["overlap"] >= int(success_k)),
     "best_pred": best["pred"],
     "best_score": float(best["score"]),
-    "preds": [a["pred"] for a in annot],  # keep full list if you still want it
+    "pred": [a["pred"] for a in annot],  # keep full list if you still want it
 })
 
 # --------------------------------
