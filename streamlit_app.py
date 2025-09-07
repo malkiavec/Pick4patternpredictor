@@ -693,11 +693,11 @@ rows.append({
     "pred": [a["pred"] 
              for a in annot],  # keep full list if you still want it
 }) 
-return: pd.DataFrame(rows)if run_bt:bt = backtest_patterns(draws, recent_window, max_lag, list(lag_weights), alpha,
+return pd.DataFrame(rows)if run_bt:bt = backtest_patterns(draws, recent_window, max_lag, list(lag_weights), alpha,
 pattern_mode, SHIFT_SET, pattern_limit, num_preds, bonus_pos, int(success_k), int(min_hist))
     if bt.empty:
         st.info("No backtest rows. Increase history or adjust settings.")
-    else:
+         else
         total = len(bt)
         successes = int(bt["success"].sum())
         st.metric(f"Backtest success (overlap ≥ {success_k})", f"{(successes/total):.1%}", help=f"{successes}/{total}")
