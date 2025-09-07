@@ -567,6 +567,17 @@ with st.expander("Mark a past prediction as correct (positionless order)"):
                         },
                     }
                 )
+"timestamp": pd.Timestamp.utcnow().isoformat(),
+                        "seed": tuple_to_str(seed_t),
+                        "preds": preds_for_check,
+                        "actual": tuple_to_str(actual_t),
+                        "hit": success,
+                        "mode": {
+                            "note": "manual_feedback",
+                            "success_k": int(threshold_choice),
+                        },
+                    }
+                )
                 # Optional: add boosts if success (reinforce top-1 that achieved best overlap)
                 if enable_boosts and success:
                     # Choose the prediction with best overlap; if many tie, use first
@@ -604,6 +615,7 @@ with st.expander("Mark a past prediction as correct (positionless order)"):
         st.dataframe(resolved.tail(20), use_container_width=True)
         if enable_boosts:
             st.caption("Feedback boosts applied as pseudo-counts after successful top-1 hits.")
+
 
 # --------------------------------
 # Backtest (pattern-based, overlap threshold)
