@@ -606,16 +606,9 @@ with st.expander("Mark a past prediction as correct (positionless order)"):
             st.caption("Feedback boosts applied as pseudo-counts after successful top-1 hits.")
 
 # --------------------------------
+# --------------------------------
 # Backtest (pattern-based, overlap threshold)
 # --------------------------------
-st.dataframe(bt[["t","seed","actual","best_pred","best_overlap","best_pos_matches","success"]].tail(25))
-st.dataframe(bt[["t","seed","actual","best_pred","best_overlap","best_pos_matches","success"]].tail(25))
-
-# Optional: pick a row to inspect
-row_idx = st.number_input("Inspect backtest row index", min_value=int(bt["t"].min()), max_value=int(bt["t"].max()), value=int(bt["t"].max()))
-row = bt.loc[bt["t"] == row_idx].iloc[0]
-with st.expander(f"Predictions for t={row_idx} (actual {row['actual']})"):
-    st.write(row["preds"])
 
 st.subheader("Backtest (pattern-based)")
 
@@ -679,6 +672,56 @@ def backtest_patterns(draws: List[Tuple[int, ...]],
         preds = [c for c, _, _ in scored_bt[:num_preds]]
         actual = draws[t]
 
+        annot = annotate_preds(preds, actual, bonus_pos=bonus_pos)
+        best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
+        rows.append({
+            "t": t,
+            "seed": tuple_to_str(seed_bt),
+            "actual": tuple_to_str(actual),
+            "best_overlap": int(best["overlap"]),
+            "best_pos_matches": int(best["pos_matches"]),
+            "success": int(best["overlap"] >= int(success_k)),
+            "best_pred": best["pred"],
+            "best_score": float(best["score"]),
+            "pred": [a["pred"] for a in annot],  # full list if wanted
+        })
+    return pd.DataFrame(rows)
+
+# Run the backtest and show results
+if run_bt:
+    bt = backtest_patterns(
+        draws, recent_window, max_lag, list(lag_weights), alpha,
+        pattern_mode, SHIFT_SET, pattern_limit, num_preds,
+        bonus_pos, int(success_k), int(min_hist)
+    )
+    if bt.empty:
+        st.info("No backtest rows. Increase history or adjust settings.")
+    else:
+        total = len(bt)
+        successes = int(bt["success"].sum())
+        st.metric(
+            f"Backtest success (overlap ≥ {success_k})",
+            f"{(successes/total):.1%}",
+            help=f"{successes}/{total}"
+        )
+        bt["rolling_success"] = bt["success"].rolling(50, min_periods=1).mean()
+        st.line_chart(bt.set_index("t")[["rolling_success"]])
+        st.dataframe(bt.tail(25), use_container_width=True)
+        st.download_button(
+            "Download backtest (CSV)",
+            bt.to_csv(index=False).encode("utf-8"),
+            "backtest_pattern.csv",
+            "text/csv"
+        )
+            like = 0.0
+            for x, y in greedy_multiset_mapping(seed_bt, cand):
+                like += math.log(max(probs_bt.get((x, y), 1e-12), 1e-12))
+            score = math.log(prior + 1e-12) + like
+            scored_bt.append((cand, score, p))
+        scored_bt.sort(key=lambda r: r[1], reverse=True)
+        preds = [c for c, _, _ in scored_bt[:num_preds]]
+        actual = draws[t]
+
         annot = annotate_preds(pred, actual, bonus_pos=bonus_pos)
 best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
 rows.append({
@@ -699,7 +742,7 @@ pattern_mode, SHIFT_SET, pattern_limit, num_preds, bonus_pos, int(success_k), in
         st.info("No backtest rows. Increase history or adjust settings.")
          else
         total = len(bt)
-        successes = int(bt["success"].sum())
+        successes = int(bt in"success"].sum())
         st.metric(f"Backtest success (overlap ≥ {success_k})", f"{(successes/total):.1%}", help=f"{successes}/{total}")
         bt["rolling_success"] = bt["success"].rolling(50, min_periods=1).mean()
         st.line_chart(bt.set_index("t")[["rolling_success"]])
