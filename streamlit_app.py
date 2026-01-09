@@ -1,4 +1,3 @@
-```python name=streamlit_app.py url=https://github.com/malkiavec/Pick4patternpredictor/blob/8bfda0fe8523898cf7e7cf5bb28fa4508588ae59/streamlit_app.py
 # app.py
 # Streamlit app for Pick 4 with variable shift-pattern prediction, backtesting, and live correctness tracking.
 # Run: streamlit run app.py
@@ -511,4 +510,200 @@ predictions = [tuple_to_str(c) for c, _, _ in scored[:num_preds]]
 st.write(predictions)
 st.caption(f"Scored by pattern prior from history and transition likelihood. Success defined as overlap ≥ {success_k} (positionless), with bonus for exact positions.")
 
-st.download_button("Download predictions (CSV)", pd.DataFrame({"prediction": predictions}).to_csv(index=False).encode(
+st.download_button("Download predictions (CSV)", pd.DataFrame({"prediction": predictions}).to_csv(index=False).encode("utf-8"), "predictions.csv", "text/csv")
+
+# Remember predictions for live correctness
+if st.button("Remember these predictions for next draw"):
+    append_pred_log(
+        {
+            "timestamp": pd.Timestamp.utcnow().isoformat(),
+            "seed": tuple_to_str(seed),
+            "preds": predictions,
+            "actual": None,
+            "hit": 0,
+            "mode": {
+                "recent_window": recent_window,
+                "max_lag": max_lag,
+                "lag_weights": list(lag_weights),
+                "alpha": alpha,
+                "pattern_mode": pattern_mode,
+                "shift_set": SHIFT_SET,
+                "pattern_limit": pattern_limit,
+                "bonus_pos": bonus_pos,
+                "success_k": int(success_k),
+                "num_preds": int(num_preds),
+                "enable_boosts": enable_boosts,
+                "boost_weight": boost_weight,
+            },
+        }
+    )
+    st.success("Saved. When you fetch history that includes the next draw, the app will check hit/miss.")
+
+# --------------------------------
+# Live correctness tracking
+# --------------------------------
+st.subheader("Live correctness tracking")
+log_df = read_pred_log()
+if log_df.empty:
+    st.info("No saved predictions yet. Click 'Remember these predictions' after generating predictions.")
+else:
+    series_str = [tuple_to_str(t) for t in draws]
+    updates = []
+    for idx, row in log_df.iterrows():
+        if row.get("actual"):
+            continue
+        seed_str = row.get("seed")
+        if seed_str in series_str:
+            pos = series_str.index(seed_str)
+            if pos + 1 < len(series_str):
+                actual = series_str[pos + 1]
+                preds_list = row.get("preds", [])
+                # Success by overlap ≥ success_k
+                actual_t = to_tuple(actual, n_digits=n_digits)
+                overlaps = [multiset_overlap(to_tuple(p, n_digits=n_digits), actual_t) for p in preds_list]
+                best_overlap = max(overlaps) if overlaps else 0
+                success = int(best_overlap >= int(success_k))
+                log_df.at[idx, "actual"] = actual
+                log_df.at[idx, "hit"] = success
+                updates.append((idx, actual, success))
+
+                # Optional: update boosts for any correct digits (positionlessly) from top-1 prediction
+                if enable_boosts and preds_list:
+                    top1 = to_tuple(preds_list[0], n_digits=n_digits)
+                    pairs = greedy_multiset_mapping(to_tuple(seed_str, n_digits=n_digits), top1)
+                    if multiset_overlap(top1, actual_t) >= int(success_k):
+                        b = load_boosts()
+                        for x, y in pairs:
+                            key = f"{x}->{y}"
+                            b[key] = b.get(key, 0.0) + 1.0
+                        save_boosts(b)
+
+    if updates:
+        # Rewrite JSONL
+        try:
+            with open(PRED_LOG_PATH, "w") as f:
+                for _, r in log_df.iterrows():
+                    f.write(json.dumps({k: (v if not isinstance(v, (np.ndarray,)) else v.tolist()) for k, v in r.to_dict().items()}) + "\n")
+        except Exception:
+            pass
+
+    resolved = log_df.dropna(subset=["actual"])
+    if resolved.empty:
+        st.info("No matches yet between saved predictions and a subsequent actual draw in this upload.")
+    else:
+        total = len(resolved)
+        hits = int(resolved["hit"].sum())
+        st.metric(f"Live success rate (overlap ≥ {success_k})", f"{(hits/total):.1%}", help=f"{hits}/{total}")
+        st.dataframe(resolved.tail(20), use_container_width=True)
+        if enable_boosts:
+            st.caption("Feedback boosts applied as pseudo-counts after successful top-1 hits.")
+
+# --------------------------------
+# Backtest (pattern-based, overlap threshold)
+# --------------------------------
+st.subheader("Backtest (pattern-based)")
+
+min_hist = st.number_input("Min history before testing", min_value=20, max_value=2000, value=80, step=10)
+run_bt = st.button("Run backtest")
+
+@st.cache_data(show_spinner=True)
+def backtest_patterns(draws: List[Tuple[int, ...]],
+                      recent_window: int,
+                      max_lag: int,
+                      lag_weights: List[float],
+                      alpha: float,
+                      pattern_mode: str,
+                      shift_set: List[int],
+                      pattern_limit: int,
+                      num_preds: int,
+                      bonus_pos: float,
+                      success_k: int,
+                      min_hist: int) -> pd.DataFrame:
+    rows = []
+    for t in range(int(min_hist), len(draws)):
+        history = draws[max(0, t - recent_window):t] if recent_window > 0 else draws[:t]
+        if len(history) < 2:
+            continue
+        # Fit transitions
+        trans = Counter()
+        for lag, w in zip(range(1, max_lag + 1), lag_weights):
+            if w <= 0: continue
+            c = extract_digit_transitions(history, lag)
+            if w != 1.0: c = Counter({k: v * w for k, v in c.items()})
+            trans.update(c)
+        probs_bt = normalize_matrix(trans.copy(), alpha=alpha)
+
+        # Build patterns and priors from history up to t
+        if pattern_mode == "Hand-crafted":
+            pats = all_shift_patterns(n_digits=4, shift_set=shift_set, limit=pattern_limit)
+        elif pattern_mode == "Strict family (±5, ±2, 0, ±3)":
+            pats = strict_pattern_family(n_digits=4)
+            if len(pats) > pattern_limit:
+                np.random.seed(42)
+                idx = np.random.choice(len(pats), size=pattern_limit, replace=False)
+                pats = [pats[i] for i in sorted(idx)]
+        else:
+            used_lags = [lag for lag, w in zip(range(1, max_lag + 1), lag_weights) if w > 0]
+            pats = learn_pattern_multisets(history, used_lags, top_m=pattern_limit)
+            if not pats:
+                pats = all_shift_patterns(n_digits=4, shift_set=[0,1,-1,2,-2,3,-3,5,-5], limit=min(500, pattern_limit))
+        priors_bt = pattern_prior_from_counts(pats, history, [1], alpha_prior=0.2)
+
+        seed_bt = history[-1]
+        scored_bt = []
+        for p in pats:
+            cand = apply_pattern(seed_bt, p)
+            prior = priors_bt.get(p, 1.0 / max(1, len(pats)))
+            like = 0.0
+            for x, y in greedy_multiset_mapping(seed_bt, cand):
+                like += math.log(max(probs_bt.get((x, y), 1e-12), 1e-12))
+            score = math.log(prior + 1e-12) + like
+            scored_bt.append((cand, score, p))
+        scored_bt.sort(key=lambda r: r[1], reverse=True)
+        preds = [c for c, _, _ in scored_bt[:num_preds]]
+        actual = draws[t]
+
+        overlaps = [multiset_overlap(p, actual) for p in preds]
+        pos_bonuses = [pos_matches(p, actual) for p in preds]
+        best_overlap = max(overlaps) if overlaps else 0
+        success = int(best_overlap >= int(success_k))
+        best_score = max(score_prediction_against_actual(p, actual, bonus_pos=bonus_pos) for p in preds) if preds else 0.0
+
+        rows.append({
+            "t": t,
+            "seed": tuple_to_str(seed_bt),
+            "actual": tuple_to_str(actual),
+            "best_overlap": int(best_overlap),
+            "best_pos_matches": int(max(pos_bonuses) if pos_bonuses else 0),
+            "success": int(success),
+            "best_score": float(best_score),
+            "preds": [tuple_to_str(p) for p in preds],
+        })
+    return pd.DataFrame(rows)
+
+if run_bt:
+    bt = backtest_patterns(draws, recent_window, max_lag, list(lag_weights), alpha,
+                           pattern_mode, SHIFT_SET, pattern_limit, num_preds, bonus_pos, int(success_k), int(min_hist))
+    if bt.empty:
+        st.info("No backtest rows. Increase history or adjust settings.")
+    else:
+        total = len(bt)
+        successes = int(bt["success"].sum())
+        st.metric(f"Backtest success (overlap ≥ {success_k})", f"{(successes/total):.1%}", help=f"{successes}/{total}")
+        bt["rolling_success"] = bt["success"].rolling(50, min_periods=1).mean()
+        st.line_chart(bt.set_index("t")[["rolling_success"]])
+        st.dataframe(bt.tail(25), use_container_width=True)
+        st.download_button("Download backtest (CSV)", bt.to_csv(index=False).encode("utf-8"), "backtest_pattern.csv", "text/csv")
+
+# --------------------------------
+# Notes
+# --------------------------------
+with st.expander("How it works and tips"):
+    st.write(
+        "- Training: fits digit transition probabilities from your history with lag weighting and Laplace smoothing.\n"
+        "- Patterns: generates or learns shift patterns (per-digit ±k modulo 10). The pattern can vary each draw.\n"
+        "- Positionless scoring: success if at least K digits match regardless of order (default K=3). Exact-position matches add a small bonus for ranking.\n"
+        "- Learned patterns: uses the most frequent positional shift patterns seen in history to set priors. This helps capture runs where digits move by ±1 for a while (e.g., 1234 → ... → 1235).[...]\n"
+        "- Feedback boosts (optional): after live successes, adds small pseudo-counts to the mapped digit transitions to slightly favor recent winning moves.\n"
+        "- Guidance: If you believe the key mix is one ±5, one ±2, one 0, one ±3, try 'Strict family'. If patterns drift a lot, use 'Learned from history' or Hand-crafted with {0,±1,±2,±3,±5}."
+    )
