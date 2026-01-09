@@ -1,4 +1,4 @@
-```python name=streamlit_app.py url=https://github.com/malkiavec/Pick4patternpredictor/blob/8bfda0fe8523898cf7e7cf5bb28fa4508588ae59/streamlit_app.py
+```python name=streamlit_app.py url=https://github.com/malkiavec/Pick4patternpredictor/blob/bfda0fe8523898cf7e7cf5bb28fa4508588ae59/streamlit_app.py
 # app.py
 # Streamlit app for Pick 4 with variable shift-pattern prediction, backtesting, and live correctness tracking.
 # Run: streamlit run app.py
