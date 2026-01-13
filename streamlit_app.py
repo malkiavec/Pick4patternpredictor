@@ -1,4 +1,3 @@
-
 # app.py
 # Streamlit app for Pick 4 with variable shift-pattern prediction, backtesting, and live correctness tracking.
 # Run: streamlit run app.py
