@@ -12,7 +12,6 @@ from typing import Iterable, Dict, Tuple, List, Optional
 import numpy as np
 import pandas as pd
 import streamlit as st
-import requests
 
 try:
     import matplotlib.pyplot as plt
@@ -78,6 +77,19 @@ def read_pred_log() -> pd.DataFrame:
     if "hit" in df.columns:
         df["hit"] = df["hit"].astype(int)
     return df
+    def annotate_preds(preds: List[Tuple[int, ...]], actual: Tuple[int, ...], bonus_pos: float = 0.25) -> List[Dict]:
+    rows = []
+    for p in preds:
+        rows.append({
+            "pred": tuple_to_str(p),
+            "overlap": multiset_overlap(p, actual),
+            "pos_matches": pos_matches(p, actual),
+            "score": score_prediction_against_actual(p, actual, bonus_pos=bonus_pos),
+        })
+    rows.sort(key=lambda r: (r["overlap"], r["pos_matches"], r["score"]), reverse=True)
+    return rows
+
+    
 
 # --------------------------------
 # Core utils
@@ -262,6 +274,19 @@ def score_prediction_against_actual(pred: Tuple[int, ...], actual: Tuple[int, ..
     base = multiset_overlap(pred, actual)
     bonus = bonus_pos * pos_matches(pred, actual)
     return float(base) + float(bonus)
+annot = annotate_preds(preds, actual, bonus_pos=bonus_pos)
+best = annot[0] if annot else {"pred": None, "overlap": 0, "pos_matches": 0, "score": 0}
+rows.append({
+    "t": t,
+    "seed": tuple_to_str(seed_bt),
+    "actual": tuple_to_str(actual),
+    "best_overlap": int(best["overlap"]),
+    "best_pos_matches": int(best["pos_matches"]),
+    "success": int(best["overlap"] >= int(success_k)),
+    "best_pred": best["pred"],
+    "best_score": float(best["score"]),
+    "preds": [a["pred"] for a in annot],  # keep full list if you still want it
+})
 
 # --------------------------------
 # Cached stages
@@ -293,83 +318,19 @@ def compute_transitions(draws: List[Tuple[int, ...]], recent_window: int, max_la
     return all_trans
 
 # --------------------------------
-# NY Lottery API fetch helpers
+# Sidebar controls
 # --------------------------------
-@st.cache_data(show_spinner=False)
-def fetch_ny_draws(url: str, limit: int = 1000, timeout: int = 10) -> pd.DataFrame:
-    """
-    Fetch data from the NY State data API endpoint (Socrata style).
-    Tries to handle common response shapes: dict with 'data' + 'meta', list of dicts, or list of lists.
-    Returns a pandas DataFrame.
-    """
-    params = {"$limit": limit, "$order": "draw_date DESC"}
-    r = requests.get(url, params=params, timeout=timeout)
-    r.raise_for_status()
-    data = r.json()
+st.sidebar.header("History")
+n_digits = 4  # Pick 4 primarily
+hist_file = st.sidebar.file_uploader("Upload history CSV (one column with draws like 4728)", type=["csv"])
+hist_col = st.sidebar.text_input("Draw column name (optional)")
 
-    # Socrata JSON shape: dict with 'data' (list of rows) and 'meta.view.columns' for column names
-    if isinstance(data, dict) and "data" in data:
-        rows = data.get("data", [])
-        cols = []
-        try:
-            cols = [c.get("name") for c in data.get("meta", {}).get("view", {}).get("columns", [])]
-        except Exception:
-            cols = []
-        if cols and isinstance(rows, list) and rows and isinstance(rows[0], list):
-            return pd.DataFrame(rows, columns=cols)
-        elif isinstance(rows, list) and rows and isinstance(rows[0], dict):
-            return pd.DataFrame(rows)
-        else:
-            return pd.DataFrame(rows)
-    # If it's a list of dicts (common)
-    if isinstance(data, list):
-        if data and isinstance(data[0], dict):
-            return pd.DataFrame(data)
-        elif data and isinstance(data[0], list):
-            # no column names available
-            return pd.DataFrame(data)
-    # Fallback: return empty DataFrame
-    return pd.DataFrame()
-
-def detect_draw_column(df: pd.DataFrame, n_digits: int = 4) -> Optional[str]:
-    """
-    Heuristic: choose the column most likely to contain the draw string (e.g., '1234' or '1-2-3-4').
-    """
-    if df is None or df.empty:
-        return None
-    best_col = None
-    best_score = -1.0
-    for col in df.columns:
-        series = df[col].dropna().astype(str).head(1000)
-        if series.empty:
-            continue
-        matches = 0
-        total = 0
-        for v in series:
-            total += 1
-            digs = digits_only(v)
-            if len(digs) == n_digits:
-                matches += 1
-        score = matches / max(1, total)
-        if score > best_score:
-            best_score = score
-            best_col = col
-    # require at least one match to be confident; otherwise return first column
-    if best_score <= 0:
-        return df.columns[0]
-    return best_col
-
-# --------------------------------
-# Sidebar controls (NY API instead of CSV upload)
-# --------------------------------
-st.sidebar.header("History / Data source")
-st.sidebar.write("This build fetches Pick 4 history from the NY State Lottery dataset (Socrata API).")
-ny_api = st.sidebar.text_input("NY Lottery API URL", "https://data.ny.gov/api/v3/views/hsys-3def/query.json")
-ny_limit = st.sidebar.number_input("Number of draws to fetch", min_value=50, max_value=10000, value=1000, step=50)
-fetch_button = st.sidebar.button("Fetch draws from NY API")
+if st.sidebar.checkbox("Use sample data", value=False):
+    sample = pd.DataFrame({"draw": ["1234","3601","9870","7412","2583","1235","3691","0246","1357","2468","3579","4680","5791","6913","8035"]})
+    hist_file = io.BytesIO(sample.to_csv(index=False).encode("utf-8"))
+    hist_col = "draw"
 
 st.sidebar.header("Training window")
-n_digits = 4  # Pick 4 primarily
 recent_window = st.sidebar.slider("Recent window (draws); 0 = all", 0, 5000, 500, 50)
 max_lag = st.sidebar.slider("Max skip (lag)", 1, 10, 3, 1)
 
@@ -405,25 +366,18 @@ enable_boosts = st.sidebar.checkbox("Enable feedback boosts from live correct hi
 boost_weight = st.sidebar.slider("Boost weight (pseudo-count scale)", 0.0, 5.0, 1.0, 0.1)
 
 # --------------------------------
-# Load data (from NY API)
+# Load data
 # --------------------------------
 draws: List[Tuple[int, ...]] = []
-df = pd.DataFrame()
-if fetch_button:
+if hist_file is not None:
     try:
-        df = fetch_ny_draws(ny_api, limit=int(ny_limit))
-        if df.empty:
-            st.error("Fetched empty dataset from NY API. Verify the URL or increase the limit.")
-        else:
-            # detect the best column that looks like a 4-digit draw
-            chosen_col = detect_draw_column(df, n_digits=n_digits)
-            draws = parse_draws_from_df(df, n_digits=n_digits, hist_col=chosen_col)
-            st.success(f"Fetched {len(df)} rows. Using column: {chosen_col}")
+        df = pd.read_csv(hist_file)
+        draws = parse_draws_from_df(df, n_digits=n_digits, hist_col=hist_col)
     except Exception as e:
-        st.error(f"Failed to fetch NY draws: {e}")
+        st.error(f"Failed to read CSV: {e}")
 
 if not draws:
-    st.info("Fetch Pick 4 history from the NY API (use the controls in the sidebar) to begin.")
+    st.info("Upload your history CSV or use sample data to begin.")
     st.stop()
 
 st.subheader("Data")
@@ -537,7 +491,7 @@ if st.button("Remember these predictions for next draw"):
             },
         }
     )
-    st.success("Saved. When you fetch history that includes the next draw, the app will check hit/miss.")
+    st.success("Saved. When you load history that includes the next draw, the app will check hit/miss.")
 
 # --------------------------------
 # Live correctness tracking
@@ -577,6 +531,71 @@ else:
                             key = f"{x}->{y}"
                             b[key] = b.get(key, 0.0) + 1.0
                         save_boosts(b)
+# -----------------------------
+# Manual feedback: mark a prediction as correct (positionless)
+# -----------------------------
+st.subheader("Manual feedback (teach the app a correct hit)")
+
+with st.expander("Mark a past prediction as correct (positionless order)"):
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        seed_input = st.text_input("Seed (previous draw)", value=tuple_to_str(draws[-2]) if len(draws) >= 2 else "")
+        actual_input = st.text_input("Actual next draw", value=tuple_to_str(draws[-1]) if len(draws) >= 1 else "")
+        threshold_choice = st.selectbox("Success threshold (overlap)", options=[3, 4], index=1)  # default 4-of-4
+    with col_m2:
+        mode_choice = st.selectbox("Which predictions to validate", ["Paste predictions", "Use current predictions"], index=1)
+        pasted_preds = st.text_area("Predictions (comma-separated like 4728,6913,8035)", value="")
+
+    # Prepare prediction list
+    preds_for_check: List[str] = []
+    if mode_choice == "Use current predictions":
+        # Use the predictions we just generated above
+        preds_for_check = predictions  # from the Predictions section
+    else:
+        if pasted_preds.strip():
+            preds_for_check = [p.strip() for p in pasted_preds.split(",") if p.strip()]
+
+    if st.button("Mark success (positionless)"):
+        try:
+            seed_t = to_tuple(seed_input, n_digits=4)
+            actual_t = to_tuple(actual_input, n_digits=4)
+            if not preds_for_check:
+                st.warning("No predictions to check. Paste predictions or select 'Use current predictions'.")
+            else:
+                overlaps = [multiset_overlap(to_tuple(p, n_digits=4), actual_t) for p in preds_for_check]
+                best_overlap = max(overlaps) if overlaps else 0
+                success = int(best_overlap >= int(threshold_choice))
+                # Write a record to live log
+                append_pred_log(
+                    {
+                        "timestamp": pd.Timestamp.utcnow().isoformat(),
+                        "seed": tuple_to_str(seed_t),
+                        "preds": preds_for_check,
+                        "actual": tuple_to_str(actual_t),
+                        "hit": success,
+                        "mode": {
+                            "note": "manual_feedback",
+                            "success_k": int(threshold_choice),
+                        },
+                    }
+                )
+                # Optional: add boosts if success (reinforce top-1 that achieved best overlap)
+                if enable_boosts and success:
+                    # Choose the prediction with best overlap; if many tie, use first
+                    best_idx = int(np.argmax(overlaps))
+                    top_pred_t = to_tuple(preds_for_check[best_idx], n_digits=4)
+                    pairs = greedy_multiset_mapping(seed_t, top_pred_t)
+                    b = load_boosts()
+                    for x, y in pairs:
+                        key = f"{x}->{y}"
+                        b[key] = b.get(key, 0.0) + 1.0
+                    save_boosts(b)
+                if success:
+                    st.success(f"Recorded success: best overlap = {best_overlap} (threshold {threshold_choice}).")
+                else:
+                    st.info(f"Recorded miss: best overlap = {best_overlap} (threshold {threshold_choice}).")
+        except Exception as e:
+            st.error(f"Could not record feedback: {e}")
 
     if updates:
         # Rewrite JSONL
@@ -601,6 +620,15 @@ else:
 # --------------------------------
 # Backtest (pattern-based, overlap threshold)
 # --------------------------------
+st.dataframe(bt[["t","seed","actual","best_pred","best_overlap","best_pos_matches","success"]].tail(25))
+st.dataframe(bt[["t","seed","actual","best_pred","best_overlap","best_pos_matches","success"]].tail(25))
+
+# Optional: pick a row to inspect
+row_idx = st.number_input("Inspect backtest row index", min_value=int(bt["t"].min()), max_value=int(bt["t"].max()), value=int(bt["t"].max()))
+row = bt.loc[bt["t"] == row_idx].iloc[0]
+with st.expander(f"Predictions for t={row_idx} (actual {row['actual']})"):
+    st.write(row["preds"])
+
 st.subheader("Backtest (pattern-based)")
 
 min_hist = st.number_input("Min history before testing", min_value=20, max_value=2000, value=80, step=10)
@@ -703,7 +731,7 @@ with st.expander("How it works and tips"):
         "- Training: fits digit transition probabilities from your history with lag weighting and Laplace smoothing.\n"
         "- Patterns: generates or learns shift patterns (per-digit ±k modulo 10). The pattern can vary each draw.\n"
         "- Positionless scoring: success if at least K digits match regardless of order (default K=3). Exact-position matches add a small bonus for ranking.\n"
-        "- Learned patterns: uses the most frequent positional shift patterns seen in history to set priors. This helps capture runs where digits move by ±1 for a while (e.g., 1234 → ... → 1235).[...]\n"
+        "- Learned patterns: uses the most frequent positional shift patterns seen in history to set priors. This helps capture runs where digits move by ±1 for a while (e.g., 1234 → ... → 1235).\n"
         "- Feedback boosts (optional): after live successes, adds small pseudo-counts to the mapped digit transitions to slightly favor recent winning moves.\n"
         "- Guidance: If you believe the key mix is one ±5, one ±2, one 0, one ±3, try 'Strict family'. If patterns drift a lot, use 'Learned from history' or Hand-crafted with {0,±1,±2,±3,±5}."
     )
